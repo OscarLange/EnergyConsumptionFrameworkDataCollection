@@ -1,3 +1,4 @@
+from sqlalchemy import null
 from ina219 import INA219, DeviceRangeError
 from time import sleep
 import socket
@@ -8,7 +9,7 @@ import sys
 mutex = Lock()
 
 #Acknowledge message 
-ack = "Acknowledged";
+ack = "Acknowledged"
 freq_switch = "Freq Switch"
 config_switch = "Config Switch"
 
@@ -22,18 +23,6 @@ config_index = 0
 cur_freq_index = 0
 cur_util_index = 2
 cur_work_index = 1
-
-work_mode = ""
-#test or training data
-if int(sys.argv[2]) == 1:
-    print("Test MODE")
-    work_mode = "./test/"
-elif int(sys.argv[2]) == 0:
-    print("Training Mode")
-    work_mode = "./training/"
-else:
-    print("Debug Mode")
-    work_files = ["debug_test.csv"]
 
 #Resistance of Resistor inside INA219
 SHUNT_OHM = 0.1
@@ -97,31 +86,30 @@ def avg_values(stored_values):
     avg_ushunt /= len(stored_values)
     return str(avg_uges) + "," + str(avg_iges) + "," + str(avg_pges) + "," + str(avg_ushunt)
 
+start_mode = False
+#create socket to listen on
+sock = socket.socket()
+sock.bind(('0.0.0.0', 8090))
+sock.listen(0)
+
+print("waiting for coordinating device")
+readClient, readAddr = sock.accept();    
+
 #read ina values and store in file
 def read_ina219():
     global stored_values
     while(not mutex.acquire(False)):
         values = ""
         Uges = ina.voltage() + ina.shunt_voltage()/1000
-        print('Ubat  : {0:0.6f}V'.format(Uges))
         values += '{0:0.2f},'.format(Uges)
-        print('Iges  : {0:0.10f}mA'.format(ina.current()))
         values += '{0:0.2f},'.format(ina.current())
-        print('Pges  : {0:0.10f}mW'.format(ina.power()))
         values += '{0:0.2f},'.format(ina.power())
-        print('Ushunt  : {0:0.3f}mV\n'.format(ina.shunt_voltage()))
         values += '{0:0.10f}'.format(ina.shunt_voltage())
-        print(values)
         stored_values.append(values)
+        readClient.send(values)
         sleep(1)
-    mutex.release();
-    
-start_mode = False
+    mutex.release()
 
-#create socket to listen on
-sock = socket.socket();
-sock.bind(('0.0.0.0', 8090));
-sock.listen(0);
 
 #main loop to wait on incoming msg
 while 1:
@@ -132,12 +120,12 @@ while 1:
         while 1:
             #wait for msg
             print("waiting for next connection")
-            content = client.recv(2048);
+            content = client.recv(2048)
             if len(content) == 0:
-                break;
+                break
             else:
                 sanitized_content = sanitize_output(content)
-                print(sanitized_content);
+                print(sanitized_content)
                 #start the collection process
                 if("Start collecting" in sanitized_content):
                     start_values = (sanitized_content.split(":")[1]).split(",")
@@ -155,7 +143,6 @@ while 1:
                     client.send(ack.encode());
                     #dont collect values while the work is initializing
                     sleep(5)
-
                     #start another thread that reads the GPIO
                     t = Thread(target = read_ina219, args = ())
                     t.start()
@@ -236,17 +223,17 @@ while 1:
                                 entries.remove(got_entry)
                                 break
                     
-                    #write back to file
-                    print("Writting to =>" + work_files[cur_work_index])
-                    file_name = work_mode + work_files[cur_work_index]
-                    with open(file_name, 'a') as f:
-                        try:
-                            for line in stored_values:
-                                f.write(line + appendix)
-                                f.write("\n")
+                    # #write back to file
+                    # print("Writting to =>" + work_files[cur_work_index])
+                    # file_name = work_mode + work_files[cur_work_index]
+                    # with open(file_name, 'a') as f:
+                    #     try:
+                    #         for line in stored_values:
+                    #             f.write(line + appendix)
+                    #             f.write("\n")
 
-                        except DeviceRangeError as e:
-                            print('Current to large!')
+                    #     except DeviceRangeError as e:
+                    #         print('Current to large!')
                     stored_values = []
                     client.send(ack.encode());
 
