@@ -29,7 +29,7 @@ while(i < 20000):
     read_ina219()
     i += 1
 
-file_name = "./test_preproc3.csv"
+file_name = "./test_firebase4.csv"
 
 with open(file_name, 'a') as f:
     try:
