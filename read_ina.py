@@ -29,12 +29,12 @@ while(i < 20000):
     read_ina219()
     i += 1
 
-file_name = "./test_preproc.csv"
+file_name = "./test_firebase2.csv"
 
 with open(file_name, 'a') as f:
     try:
         for val in stored_values:
-            f.write(val + "10,480\n")
+            f.write(val + ",10,160\n")
     except DeviceRangeError as e:
         print('Current to large!')
 
