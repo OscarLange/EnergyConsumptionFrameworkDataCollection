@@ -1,4 +1,3 @@
-from sqlalchemy import null
 from ina219 import INA219, DeviceRangeError
 from time import sleep
 import socket
@@ -23,6 +22,7 @@ config_index = 0
 cur_freq_index = 0
 cur_util_index = 2
 cur_work_index = 1
+change_work = False
 
 #Resistance of Resistor inside INA219
 SHUNT_OHM = 0.1
@@ -95,19 +95,31 @@ sock.listen(0)
 print("waiting for coordinating device")
 readClient, readAddr = sock.accept();    
 
+config = str(readClient.recv(1024).decode())
+print(config)
+if(config[0] == 'y'):
+    change_work = True
+    cur_work_index = 0
+    cur_freq_index = int(config.split(",")[1])
+    cur_work_index = int(config.split(",")[2])
+    cur_util_index = int(config.split(",")[3])
+
 #read ina values and store in file
 def read_ina219():
     global stored_values
     while(not mutex.acquire(False)):
-        values = ""
-        Uges = ina.voltage() + ina.shunt_voltage()/1000
-        values += '{0:0.2f},'.format(Uges)
-        values += '{0:0.2f},'.format(ina.current())
-        values += '{0:0.2f},'.format(ina.power())
-        values += '{0:0.10f}'.format(ina.shunt_voltage())
-        stored_values.append(values)
-        readClient.send(values)
-        sleep(1)
+        try:
+            values = ""
+            Uges = ina.voltage() + ina.shunt_voltage()/1000
+            values += '{0:0.2f},'.format(Uges)
+            values += '{0:0.2f},'.format(ina.current())
+            values += '{0:0.2f},'.format(ina.power())
+            values += '{0:0.10f};'.format(ina.shunt_voltage())
+            stored_values.append(values)
+            readClient.send(values.encode())
+        except:
+            print("Current to high")
+            return
     mutex.release()
 
 
@@ -129,20 +141,11 @@ while 1:
                 #start the collection process
                 if("Start collecting" in sanitized_content):
                     start_values = (sanitized_content.split(":")[1]).split(",")
-                    if(int(start_values[0]) != cpu_frequencies[cur_freq_index]):
-                        print(start_values[0] + "," + str(cpu_frequencies[cur_freq_index]))
-                        raise ValueError("CPU frequencies dont match")
-                    if(int(start_values[1]) != cpu_utilization[cur_util_index]):
-                        print(start_values[1] + "," + str(cpu_utilization[cur_util_index]))
-                        raise ValueError("CPU utilization doesnt match")
-                    if(int(start_values[2]) != cur_work_index):
-                        print(start_values[2] + "," + str(cur_work_index))
-                        raise ValueError("Work types doesnt match")
                     start_mode = True
                     mutex.acquire()
                     client.send(ack.encode());
                     #dont collect values while the work is initializing
-                    sleep(5)
+                    sleep(2)
                     #start another thread that reads the GPIO
                     t = Thread(target = read_ina219, args = ())
                     t.start()
@@ -152,10 +155,13 @@ while 1:
                 elif ("Stop collecting" in sanitized_content):
                     #stop other task
                     mutex.release()
+                    #sleep other task as to not cause issues with the writing to compute unit
+                    sleep(10)
                     t.join()
                     #if one configuration is done tell client to switch modes
-                    if config_index == int(sys.argv[1]):
-                        if cur_work_index == (len(work_files)-1) and cur_util_index == (len(cpu_utilization)-1):
+                    if (config_index == int(sys.argv[1])) or change_work:
+                        if (cur_work_index == (len(work_files)-1) and cur_util_index == (len(cpu_utilization)-1)) or change_work:
+                            change_work = False
                             print("Frequency switch")
                             client.send(freq_switch.encode());
                         else:
@@ -188,6 +194,8 @@ while 1:
                         start_mode = False
                     answer = str(cur_work_index) + "," + str(cpu_utilization[cur_util_index]) + ";"
                     client.send(answer.encode());
+                elif("Brownout" in sanitized_content):
+                    print("BROWNOUT DETECTED")
                 else:
                     #if client crashed and requests config while the server is collecting data
                     #then restart
@@ -223,19 +231,20 @@ while 1:
                                 entries.remove(got_entry)
                                 break
                     
-                    # #write back to file
-                    # print("Writting to =>" + work_files[cur_work_index])
-                    # file_name = work_mode + work_files[cur_work_index]
-                    # with open(file_name, 'a') as f:
-                    #     try:
-                    #         for line in stored_values:
-                    #             f.write(line + appendix)
-                    #             f.write("\n")
+                    appendix = "c" + "," + work_files[cur_work_index] + "," + str(cpu_frequencies[cur_freq_index]) + "," + str(cpu_utilization[cur_util_index]) + appendix + ";"
 
-                    #     except DeviceRangeError as e:
-                    #         print('Current to large!')
-                    stored_values = []
                     client.send(ack.encode());
+                    readClient.send(appendix.encode())
+                    stored_values = []
+                    config = str(readClient.recv(1024).decode())
+                    print(config)
+                    if(config[0] == 'y'):
+                        change_work = True
+                        cur_work_index = 0
+                        cur_freq_index = int(config.split(",")[1])
+                        cur_work_index = int(config.split(",")[2])
+                        cur_util_index = int(config.split(",")[3])
+
 
     except KeyboardInterrupt:          
         #program is only stop-able through external cancel
